@@ -279,6 +279,7 @@ $global:ExoStubDns = @{
 function global:Resolve-DnsName {
     [CmdletBinding()]
     param([string] $Name, [string] $Type, [switch] $DnsOnly)
+    if ($Name -like '*broken.example') { throw "$Name : This operation returned because the timeout period expired" }   # resolver failure
     $entries = $global:ExoStubDns["$Type|$Name"]
     if (-not $entries) { throw "$Name : DNS name does not exist" }
     foreach ($e in $entries) {
@@ -286,4 +287,8 @@ function global:Resolve-DnsName {
         foreach ($k in $e.Keys) { $o[$k] = $e[$k] }
         [pscustomobject]$o
     }
+}
+
+function global:Get-ConnectionInformation {
+    [pscustomobject]@{ State = 'Connected'; TenantID = '11111111-2222-3333-4444-555555555555'; UserPrincipalName = 'reader@contoso.com' }
 }

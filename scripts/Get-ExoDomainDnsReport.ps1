@@ -78,8 +78,29 @@ foreach ($d in $Domain) {
     $d = $d.Trim().ToLowerInvariant()
     Write-Verbose "Checking DNS for $d"
 
+    # Look everything up first. If DNS itself fails, report "could not check" rather than
+    # "record missing", and skip the domain.
+    try {
+        $dns = @{
+            MX     = @(Resolve-ExoDnsRecord -Name $d -Type MX | Sort-Object Preference)
+            TXT    = @(Resolve-ExoDnsRecord -Name $d -Type TXT)
+            DMARC  = @(Resolve-ExoDnsRecord -Name "_dmarc.$d" -Type TXT)
+            MTASTS = @(Resolve-ExoDnsRecord -Name "_mta-sts.$d" -Type TXT)
+            TLSRPT = @(Resolve-ExoDnsRecord -Name "_smtp._tls.$d" -Type TXT)
+            DKIM1  = @(Resolve-ExoDnsRecord -Name "selector1._domainkey.$d" -Type CNAME)
+            DKIM2  = @(Resolve-ExoDnsRecord -Name "selector2._domainkey.$d" -Type CNAME)
+        }
+    }
+    catch {
+        Add-ExoFinding $result -Check 'DNS lookup' -Status Warning -Severity Medium -Target $d `
+            -Detail "Could not query DNS, so MX/SPF/DKIM/DMARC were not checked: $($_.Exception.Message)" `
+            -Recommendation 'Re-run from a machine with normal DNS access (Windows uses Resolve-DnsName; PowerShell 7 elsewhere needs HTTPS to cloudflare-dns.com or dns.google).'
+        $rows.Add([pscustomobject]@{ Domain = $d; MX = ''; MxToEOP = $null; SPF = ''; SpfLookups = $null; DMARC = ''; DKIM = 'NotChecked'; MtaSts = $null; TlsRpt = $null })
+        continue
+    }
+
     # MX
-    $mx = @(Resolve-ExoDnsRecord -Name $d -Type MX | Sort-Object Preference)
+    $mx = $dns.MX
     $mxHosts = @($mx | ForEach-Object { $_.Data })
     $mxToEop = @($mxHosts | Where-Object { $_ -match '\.mail\.protection\.outlook\.com$|\.mx\.microsoft$' })
     if ($mx.Count -eq 0) {
@@ -97,7 +118,7 @@ foreach ($d in $Domain) {
     }
 
     # SPF
-    $txt = @(Resolve-ExoDnsRecord -Name $d -Type TXT)
+    $txt = $dns.TXT
     $spf = @($txt | Where-Object { $_.Data -match '^v=spf1(\s|$)' })
     $spfRecord = ''
     $spfLookups = $null
@@ -112,7 +133,11 @@ foreach ($d in $Domain) {
     }
     else {
         $spfRecord = $spf[0].Data
-        $spfLookups = Get-SpfLookupCount -Record $spfRecord
+        try { $spfLookups = Get-SpfLookupCount -Record $spfRecord }
+        catch {
+            $spfLookups = $null
+            Add-ExoFinding $result -Check 'SPF DNS lookup limit' -Status Info -Target $d -Detail "Could not count SPF lookups: $($_.Exception.Message)"
+        }
         $all = if ($spfRecord -match '(?:^|\s)([+\-~?]?)all\s*$') { $Matches[1] } else { $null }
 
         if ($spfRecord -notmatch 'include:spf\.protection\.outlook\.com') {
@@ -144,7 +169,7 @@ foreach ($d in $Domain) {
     }
 
     # DMARC
-    $dmarc = @(Resolve-ExoDnsRecord -Name "_dmarc.$d" -Type TXT | Where-Object { $_.Data -match '^v=DMARC1' })
+    $dmarc = @($dns.DMARC | Where-Object { $_.Data -match '^v=DMARC1' })
     $dmarcRecord = ''
     if ($dmarc.Count -eq 0) {
         Add-ExoFinding $result -Check 'DMARC' -Status Fail -Severity High -Target $d `
@@ -206,7 +231,7 @@ foreach ($d in $Domain) {
         }
     }
     foreach ($selector in 'selector1', 'selector2') {
-        $cname = @(Resolve-ExoDnsRecord -Name "$selector._domainkey.$d" -Type CNAME)
+        $cname = @(if ($selector -eq 'selector1') { $dns.DKIM1 } else { $dns.DKIM2 })
         if ($connected -and $dkim -and $cname.Count -eq 0) {
             Add-ExoFinding $result -Check 'DKIM CNAME' -Status Warning -Severity Medium -Target $d `
                 -Detail "$selector._domainkey.$d CNAME is missing; key rotation will break DKIM." `
@@ -214,9 +239,16 @@ foreach ($d in $Domain) {
         }
     }
 
+    if (-not $connected -and $dns.DKIM1.Count -eq 0 -and $dns.DKIM2.Count -eq 0) {
+        $dkimStatus = 'NoSelectorCNAMEs'
+        Add-ExoFinding $result -Check 'DKIM signing' -Status Warning -Severity Medium -Target $d `
+            -Detail 'selector1/selector2._domainkey CNAMEs are not published, so Exchange Online is almost certainly not DKIM-signing with this domain (mail is signed as *.onmicrosoft.com and DKIM does not align for DMARC).' `
+            -Recommendation "Connect to Exchange Online and run: New-DkimSigningConfig -DomainName $d -Enabled `$false; publish the CNAMEs from Get-DkimSigningConfig; then Set-DkimSigningConfig -Identity $d -Enabled `$true"
+    }
+
     # MTA-STS and TLS-RPT
-    $mtaSts = @(Resolve-ExoDnsRecord -Name "_mta-sts.$d" -Type TXT | Where-Object { $_.Data -match '^v=STSv1' })
-    $tlsRpt = @(Resolve-ExoDnsRecord -Name "_smtp._tls.$d" -Type TXT | Where-Object { $_.Data -match '^v=TLSRPTv1' })
+    $mtaSts = @($dns.MTASTS | Where-Object { $_.Data -match '^v=STSv1' })
+    $tlsRpt = @($dns.TLSRPT | Where-Object { $_.Data -match '^v=TLSRPTv1' })
     if ($mtaSts.Count -eq 0 -and $mxToEop.Count -gt 0) {
         Add-ExoFinding $result -Check 'MTA-STS' -Status Info -Target $d `
             -Detail 'No MTA-STS policy: senders may fall back to unencrypted delivery under a downgrade attack.' `

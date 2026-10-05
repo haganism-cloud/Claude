@@ -27,6 +27,7 @@ foreach ($file in Get-ChildItem $scripts, $PSScriptRoot -Filter *.ps1) {
 if (Test-Path $OutputPath) { Remove-Item $OutputPath -Recurse -Force }
 
 & (Join-Path $scripts 'Invoke-ExoTenantHealthCheck.ps1') -OutputPath $OutputPath -MessageTraceDays 3 `
+    -BaselinePath (Join-Path $PSScriptRoot 'contoso.baseline.psd1') `
     -IncludeMailboxLevelChecks -IncludeInboxRules -WarningAction SilentlyContinue | Out-Null
 
 foreach ($f in 'ExoHealthReport.html', 'AllFindings.csv', 'Summary.json', 'Connectors-InboundConnectors.csv', 'MailFlow-TraceByStatus.csv') {
@@ -71,6 +72,42 @@ $expected = @(
 foreach ($e in $expected) {
     $hit = $findings | Where-Object { $_.Check -eq $e[0] -and $_.Status -eq $e[1] -and ($e[2] -eq '' -or $_.Target -like "*$($e[2])*") }
     if (-not $hit) { $failures.Add("Expected finding not produced: $($e[0]) / $($e[1]) / $($e[2])") }
+}
+
+# Baseline drift (tests/contoso.baseline.psd1 differs from the stub tenant on purpose).
+foreach ($e in @(
+        , @('Connected tenant', 'Pass', '')
+        , @('MX matches baseline', 'Pass', 'contoso.com')
+        , @('SPF changed', 'Warning', 'contoso.com')
+        , @('DMARC weaker than baseline', 'Fail', 'contoso.com')
+        , @('Unexpected inbound connectors', 'Warning', 'From Fabrikam partner')
+        , @('Missing mail flow rules', 'Warning', 'Retired rule')
+        , @('accepted domains match baseline', 'Pass', '')
+    )) {
+    $hit = $findings | Where-Object { $_.Section -eq 'Baseline Drift' -and $_.Check -eq $e[0] -and $_.Status -eq $e[1] -and ($e[2] -eq '' -or $_.Target -like "*$($e[2])*") }
+    if (-not $hit) { $failures.Add("Expected baseline finding not produced: $($e[0]) / $($e[1]) / $($e[2])") }
+}
+
+# A DNS resolver failure must be reported as "could not check", never as missing records.
+$dnsFail = & (Join-Path $scripts 'Get-ExoDomainDnsReport.ps1') -Domain broken.example -WarningAction SilentlyContinue
+$checks = @($dnsFail.Findings | ForEach-Object { "$($_.Check)/$($_.Status)" })
+if ($checks -notcontains 'DNS lookup/Warning' -or ($checks -match '^(SPF|DMARC|MX record)/')) {
+    $failures.Add("DNS failure handling wrong: $($checks -join ', ')")
+}
+
+# Wrong tenant: the baseline must flag a tenant ID mismatch.
+$wrong = Join-Path ([System.IO.Path]::GetTempPath()) 'wrong-tenant.psd1'
+"@{ TenantName = 'other'; TenantId = '99999999-9999-9999-9999-999999999999' }" | Set-Content $wrong
+$wrongResult = & (Join-Path $scripts 'Get-ExoBaselineReport.ps1') -BaselinePath $wrong
+if (-not ($wrongResult.Findings | Where-Object { $_.Check -eq 'Connected tenant' -and $_.Status -eq 'Fail' })) {
+    $failures.Add('Wrong-tenant baseline did not produce a Fail')
+}
+
+# Tenant profiles in the repo must load and only use known keys.
+foreach ($p in Get-ChildItem (Join-Path $root 'tenants') -Filter *.psd1 -Recurse) {
+    $data = Import-PowerShellDataFile $p.FullName
+    $unknown = @($data.Keys | Where-Object { $_ -notin 'TenantName', 'TenantId', 'Dns', 'Exchange', 'Report' })
+    if (-not $data.TenantName -or $unknown) { $failures.Add("Tenant profile $($p.Name) invalid (unknown keys: $($unknown -join ', '))") }
 }
 
 # Guard against false positives on correctly configured items.

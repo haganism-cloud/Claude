@@ -241,14 +241,18 @@ function Resolve-ExoDnsRecord {
 
     .DESCRIPTION
         Uses Resolve-DnsName on Windows. Elsewhere (PowerShell 7 on Linux / macOS) it falls
-        back to Cloudflare DNS-over-HTTPS. Emits objects with Name, Type, Data and, for MX,
-        Preference. Emits nothing when the name does not exist.
+        back to DNS-over-HTTPS (Cloudflare, then Google). Emits objects with Name, Type, Data
+        and, for MX, Preference.
+
+        Emits nothing when the name or record type does not exist (NXDOMAIN / no data).
+        THROWS when the lookup itself fails (timeout, SERVFAIL, DoH blocked), so callers never
+        mistake "could not check" for "record missing".
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] [string] $Name,
         [Parameter(Mandatory)] [ValidateSet('TXT', 'MX', 'CNAME', 'A', 'TLSA')] [string] $Type,
-        [string] $DohEndpoint = 'https://cloudflare-dns.com/dns-query'
+        [string[]] $DohEndpoint = @('https://cloudflare-dns.com/dns-query', 'https://dns.google/resolve')
     )
 
     $records = New-Object System.Collections.Generic.List[object]
@@ -258,8 +262,13 @@ function Resolve-ExoDnsRecord {
             $answers = Resolve-DnsName -Name $Name -Type $Type -DnsOnly -ErrorAction Stop
         }
         catch {
-            Write-Verbose "DNS $Type $Name : $($_.Exception.Message)"
-            return
+            # 9003 = DNS_ERROR_RCODE_NAME_ERROR (NXDOMAIN), 9501 = DNS_INFO_NO_RECORDS.
+            $code = Get-ExoPropertyValue $_.Exception 'NativeErrorCode' 0
+            if ($code -in 9003, 9501 -or $_.Exception.Message -match 'does not exist|No records') {
+                Write-Verbose "DNS $Type $Name : no record"
+                return
+            }
+            throw "DNS lookup failed for $Type $Name : $($_.Exception.Message)"
         }
         foreach ($a in $answers) {
             # Resolve-DnsName also returns CNAME hops and SOA records; keep only the requested type.
@@ -275,16 +284,28 @@ function Resolve-ExoDnsRecord {
         return $records.ToArray()
     }
 
-    # DNS-over-HTTPS fallback (JSON API).
+    # DNS-over-HTTPS fallback (JSON API, same format at Cloudflare and Google).
     $typeCodes = @{ A = 1; CNAME = 5; MX = 15; TXT = 16; TLSA = 52 }
-    try {
-        $uri = '{0}?name={1}&type={2}' -f $DohEndpoint, [uri]::EscapeDataString($Name), $Type
-        $response = Invoke-RestMethod -Uri $uri -Headers @{ Accept = 'application/dns-json' } -TimeoutSec 15 -ErrorAction Stop
+    $response = $null
+    $errors = @()
+    foreach ($endpoint in $DohEndpoint) {
+        try {
+            $uri = '{0}?name={1}&type={2}' -f $endpoint, [uri]::EscapeDataString($Name), $Type
+            $response = Invoke-RestMethod -Uri $uri -Headers @{ Accept = 'application/dns-json' } -TimeoutSec 15 -ErrorAction Stop
+            break
+        }
+        catch {
+            $errors += "$endpoint : $($_.Exception.Message)"
+        }
     }
-    catch {
-        Write-Warning "DNS-over-HTTPS lookup failed for $Type $Name : $($_.Exception.Message)"
-        return
+    if ($null -eq $response) {
+        throw "DNS lookup failed for $Type $Name (DNS-over-HTTPS unreachable): $($errors -join ' | ')"
     }
+
+    # RCODE: 0 NOERROR, 3 NXDOMAIN; anything else (SERVFAIL, REFUSED) is a failed lookup.
+    $rcode = [int](Get-ExoPropertyValue $response 'Status' 0)
+    if ($rcode -eq 3) { return }
+    if ($rcode -ne 0) { throw "DNS lookup failed for $Type $Name : RCODE $rcode" }
 
     $answerProp = $response.PSObject.Properties['Answer']
     if (-not $answerProp) { return }

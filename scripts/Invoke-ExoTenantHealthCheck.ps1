@@ -10,6 +10,7 @@
       Get-ExoMailFlowReport.ps1    - message trace statistics, mail flow rules, journaling
       Get-ExoSecurityReport.ps1    - auth, auditing, forwarding, EOP/Defender policies, quarantine
       Get-ExoDomainDnsReport.ps1   - MX, SPF, DKIM, DMARC, MTA-STS, TLS-RPT
+      Get-ExoBaselineReport.ps1    - drift from a tenant profile (only with -BaselinePath)
 
     Output folder contents:
       ExoHealthReport.html         - the report
@@ -38,6 +39,10 @@
 .PARAMETER ConnectParameters
     Hashtable splatted to Connect-ExoTenant.ps1, e.g. @{ UserPrincipalName = 'admin@contoso.com' }.
 
+.PARAMETER BaselinePath
+    Tenant profile (.psd1) describing the expected state. Adds a "Baseline Drift" section and
+    checks that you are connected to the right tenant. See tenants\haganism.net for an example.
+
 .PARAMETER FailOnHighSeverity
     Exit with code 2 when any High-severity Fail/Warning exists (for scheduled runs / pipelines).
 
@@ -64,6 +69,8 @@ param(
     [switch] $Connect,
     [hashtable] $ConnectParameters = @{},
 
+    [string] $BaselinePath,
+
     [switch] $FailOnHighSeverity
 )
 
@@ -80,7 +87,14 @@ $org = Get-OrganizationConfig
 $tenantName = "$($org.DisplayName) ($($org.Name))"
 Write-Host "Exchange Online health check: $tenantName" -ForegroundColor Cyan
 
+$run = @($Sections)
+if ($BaselinePath) {
+    $BaselinePath = (Resolve-Path $BaselinePath).Path
+    $run = @('Baseline') + $run
+}
+
 $plan = [ordered]@{
+    Baseline   = @{ Script = 'Get-ExoBaselineReport.ps1'; Params = @{ BaselinePath = $BaselinePath } }
     Overview   = @{ Script = 'Get-ExoTenantOverview.ps1'; Params = @{} }
     Connectors = @{ Script = 'Get-ExoConnectorReport.ps1'; Params = @{} }
     MailFlow   = @{ Script = 'Get-ExoMailFlowReport.ps1'; Params = @{ Days = $MessageTraceDays } }
@@ -91,10 +105,10 @@ $plan = [ordered]@{
 $results = New-Object System.Collections.Generic.List[object]
 $step = 0
 foreach ($name in $plan.Keys) {
-    if ($Sections -notcontains $name) { continue }
+    if ($run -notcontains $name) { continue }
     $step++
     $entry = $plan[$name]
-    Write-Progress -Activity 'Exchange Online health check' -Status $name -PercentComplete (100 * $step / $Sections.Count)
+    Write-Progress -Activity 'Exchange Online health check' -Status $name -PercentComplete (100 * $step / $run.Count)
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         $params = $entry.Params

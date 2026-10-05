@@ -33,6 +33,17 @@ Unattended (certificate auth; exit code 2 on high-severity findings):
     AppId = '<appId>'; CertificateThumbprint = '<thumbprint>'; Organization = 'contoso.onmicrosoft.com' } -FailOnHighSeverity
 ```
 
+## Tenant profiles
+
+A tenant profile (`.psd1`) records what a specific tenant *should* look like: tenant ID,
+expected MX/SPF/DMARC, and allowed domains, connectors and mail flow rules. Pass it with
+`-BaselinePath` to add a **Baseline Drift** section that flags changes and stops you from reporting on
+the wrong tenant.
+
+- **[haganism.net](tenants/haganism.net/)**: profile, one-command runner
+  (`Invoke-HaganismNetHealthCheck.ps1`, with a `-DnsOnly` mode that needs no sign-in) and the
+  current public email-authentication findings.
+
 ## What it checks
 
 | Area | Highlights |
@@ -41,6 +52,7 @@ Unattended (certificate auth; exit code 2 on high-severity findings):
 | **Mail flow** | Message trace V2 volume by status / direction / day, failure rate, pending messages, top senders and failing domains, transport rules (SCL -1 on spoofable conditions, external BCC/redirect, missing connectors, test mode, expired), journaling NDR mailbox, reply-all storm protection |
 | **Security** | Modern auth, unified audit log, mailbox auditing and bypass, SMTP AUTH, Direct Send, external tagging, auto-forwarding (policy, mailbox, inbox rules), restricted users, anti-spam/malware/phish settings, allow lists, Safe Links / Safe Attachments, presets, Tenant Allow/Block List hygiene, quarantine releases, RBAC for Applications |
 | **Email authentication** | MX target, SPF (single record, EXO include, `all` qualifier, recursive 10-lookup limit), DKIM enabled / key size / CNAMEs, DMARC policy and reporting, MTA-STS, TLS-RPT |
+| **Baseline drift** | Connected tenant ID, MX / SPF / DMARC / DKIM changes, unexpected or missing accepted domains, connectors and mail flow rules (`Get-ExoBaselineReport.ps1`, with `-BaselinePath`) |
 | **Tenant overview** | Org config, accepted / remote domains, recipient and mailbox inventory, holds and archives, Organization Management membership, Exchange Online service health (Graph) |
 
 Every check yields a finding with **Status** (Fail / Warning / Pass / Info), **Severity**
@@ -56,8 +68,8 @@ pwsh ./tests/Invoke-SmokeTest.ps1
 ```
 
 The smoke test parses every script, then runs the full health check against stubbed Exchange cmdlets
-(`tests/ExoStubs.ps1`), which model a misconfigured lab tenant. It asserts that 30 expected findings
-appear and that correctly configured objects produce no false positives. The stubs also serve as
+(`tests/ExoStubs.ps1`), which model a misconfigured lab tenant. It asserts that the expected findings appear (including baseline drift,
+wrong-tenant detection and DNS-failure handling) and that correctly configured objects produce no false positives. The stubs also serve as
 training material: each one notes which finding it is meant to trigger.
 
 ## Layout
@@ -73,8 +85,12 @@ scripts/
   Get-ExoSecurityReport.ps1
   Get-ExoDomainDnsReport.ps1
   Get-ExchangeServerConnectorReport.ps1 run in the on-premises Exchange Management Shell
+  Get-ExoBaselineReport.ps1             drift from a tenant profile
   Invoke-ExoTenantHealthCheck.ps1       runs everything and writes the report
+tenants/
+  haganism.net/                         profile, runner and current findings for haganism.net
 tests/
   ExoStubs.ps1
+  contoso.baseline.psd1
   Invoke-SmokeTest.ps1
 ```
