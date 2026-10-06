@@ -7,6 +7,9 @@
   overall status: **all connectors, mail flow and security**. They produce an HTML report plus CSV and
   JSON exports.
 
+- **[BYOD security remediation plan](byod/)**: issues that personal devices create for a cloud-only
+  Microsoft 365 tenant, ordered by criticality with remediation steps (`.numbers` and `.xlsx`).
+
 ## Quick start
 
 ```powershell
