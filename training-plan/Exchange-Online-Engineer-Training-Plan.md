@@ -277,7 +277,7 @@ written remediation step.
   (SPF / authentication), `5.7.509` (DMARC reject), `5.7.705`/`5.7.708` (tenant/IP blocked for
   spam), `4.4.7` (expired, delivery delay).
 - Tools: Message Header Analyzer, Microsoft Remote Connectivity Analyzer, Get-MailflowStatusReport.
-- Journaling: `New-JournalRule`, and why `JournalingReportNdrTo` must be a non-journaled mailbox.
+- Journaling: `New-JournalRule`, and why `JournalingReportNdrTo` (the alternate journaling mailbox) must be set to an on-premises or third-party address - Exchange Online mailboxes are not supported.
 
 **Lab**
 

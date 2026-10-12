@@ -288,7 +288,7 @@ if ($null -ne $journal -and @($journal).Count -gt 0) {
     if (-not $ndrTo -or $ndrTo -match '^<>$') {
         Add-ExoFinding $result -Check 'Journaling NDR mailbox' -Status Fail -Severity Medium `
             -Detail "$(@($journal).Count) journal rules exist but JournalingReportNdrTo is not set; undeliverable journal reports are lost." `
-            -Recommendation 'Set-TransportConfig -JournalingReportNdrTo <dedicated mailbox that is not journaled>.'
+            -Recommendation 'Set-TransportConfig -JournalingReportNdrTo <on-premises or third-party address> (an Exchange Online mailbox is not supported as the alternate journaling mailbox).'
     }
     else {
         Add-ExoFinding $result -Check 'Journaling NDR mailbox' -Status Pass -Detail "Journal NDRs go to $ndrTo."

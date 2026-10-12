@@ -10,6 +10,9 @@
 - **[BYOD security remediation plan](byod/)**: issues that personal devices create for a cloud-only
   Microsoft 365 tenant, ordered by criticality with remediation steps (`.numbers` and `.xlsx`).
 
+- **[Exchange Online security checklist](checklists/)**: 52 security checks, each as PowerShell
+  commands and as admin-console click paths, side by side in one Excel workbook.
+
 ## Quick start
 
 ```powershell
