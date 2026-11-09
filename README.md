@@ -15,6 +15,14 @@
 
 ## Quick start
 
+Set up a workstation first (installs/loads Microsoft Graph, Exchange Online, ImportExcel; `-Profile Full` adds Teams, SharePoint, Entra and more):
+
+```powershell
+.\scripts\Initialize-M365AdminModules.ps1                 # Core modules
+.\scripts\Initialize-M365AdminModules.ps1 -Profile Full -Update -Connect -UserPrincipalName admin@contoso.com
+```
+
+
 ```powershell
 Install-Module ExchangeOnlineManagement -Scope CurrentUser -MinimumVersion 3.4.0
 cd scripts
