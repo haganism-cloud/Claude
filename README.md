@@ -13,6 +13,9 @@
 - **[Exchange Online security checklist](checklists/)**: 52 security checks, each as PowerShell
   commands and as admin-console click paths, side by side in one Excel workbook.
 
+- **[PowerShell module commands (PDF)](docs/M365-PowerShell-Module-Commands.pdf)**: install, load
+  and connect commands for Microsoft Graph, Exchange Online, Teams, SharePoint and Entra.
+
 ## Quick start
 
 Set up a workstation first (installs/loads Microsoft Graph, Exchange Online, ImportExcel; `-Profile Full` adds Teams, SharePoint, Entra and more):
